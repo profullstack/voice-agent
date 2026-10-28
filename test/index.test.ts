@@ -1,6 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentConfig, deploy, headerVar, sipHeaders, sipUri, toolHandler, type VoiceAgentSpec } from '../src/index.ts'
+import { agentConfig, deploy, headerVar, redact, sipHeaders, sipUri, toolHandler, type VoiceAgentSpec } from '../src/index.ts'
+
+test("an ElevenLabs error that echoes the request never carries the tool's secret", () => {
+  const echoed = '{"detail":[{"input":{"url":"https://x.test","request_headers":{"x-voice-agent-secret":"abc123"},"api_key":"sk_1"}}]}'
+  const out = redact(echoed)
+  assert.ok(!out.includes('abc123') && !out.includes('sk_1'), out)
+  assert.ok(out.includes('https://x.test'))
+})
 
 const spec: VoiceAgentSpec = {
   name: 'riotcoder (test)',
@@ -22,6 +29,11 @@ test('a spec becomes an ElevenLabs config: end_call kept beside the webhook tool
   assert.deepEqual(hook.query_params_schema, { properties: { room: { type: 'string', dynamic_variable: 'sip_gc_room' } }, required: ['room'] })
   assert.deepEqual(hook.request_body_schema.required, ['brief'])
   assert.equal(c.conversation.max_duration_seconds, 3600)
+  assert.equal(hook.method, 'POST')
+  // No parameters: ElevenLabs refuses a POST without a body schema, so it is a GET.
+  const bare = (agentConfig({ ...spec, tools: [{ name: 'status', description: 'who is on', url: 'https://x.test/s' }] }) as any).agent.prompt.tools[2].api_schema
+  assert.equal(bare.method, 'GET')
+  assert.equal(bare.request_body_schema, undefined)
   assert.deepEqual(agentConfig({ ...spec, endCall: false, skipTurn: undefined, tools: [] }).agent, { first_message: 'riotcoder here.', language: 'en', dynamic_variables: { dynamic_variable_placeholders: { sip_gc_room: '0000' } }, prompt: { prompt: spec.prompt, llm: 'claude-sonnet-5-5', temperature: 0.6, tools: [] } })
 })
 
@@ -90,4 +102,6 @@ test('the tool handler checks the secret, runs the tool with its context, and tu
   assert.equal((await handle(req('/api/agent-tools/toString')))!.status, 404)
   assert.deepEqual(await (await handle(req('/api/agent-tools/take_task?room=4821', 's3cret', { brief: 'fix the footer' })))!.json(), { queued: 'fix the footer', room: '4821' })
   assert.deepEqual(await (await handle(req('/api/agent-tools/call_in')))!.json(), { ok: false, error: 'only Anthony can have me call people in' })
+  const get = await handle(new Request('https://x.test/api/agent-tools/take_task?room=1', { headers: { 'x-voice-agent-secret': 's3cret' } }))
+  assert.deepEqual(await get!.json(), { room: '1' })
 })
