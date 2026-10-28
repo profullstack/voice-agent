@@ -87,7 +87,8 @@ export function agentConfig(spec: VoiceAgentSpec): Record<string, unknown> {
       response_timeout_secs: t.timeoutSecs ?? 20,
       api_schema: {
         url: t.url,
-        method: 'POST',
+        // ElevenLabs refuses a POST without a body schema: a tool with no parameters is a GET.
+        method: params.length ? 'POST' : 'GET',
         ...(context.length ? { query_params_schema: { properties: Object.fromEntries(context.map(([k, v]) => [k, { type: 'string', dynamic_variable: v }])), required: context.map(([k]) => k) } } : {}),
         ...(params.length
           ? {
@@ -147,7 +148,8 @@ export class ElevenLabs {
       signal: AbortSignal.timeout(30_000),
     })
     const text = await res.text()
-    if (!res.ok) throw new VoiceAgentError(`ElevenLabs ${method} ${path}: ${res.status} ${text.slice(0, 500)}`, res.status)
+    // A 422 echoes the request back, tool headers and their secrets included: never let those into a log.
+    if (!res.ok) throw new VoiceAgentError(`ElevenLabs ${method} ${path}: ${res.status} ${redact(text).slice(0, 800)}`, res.status)
     return (text ? JSON.parse(text) : {}) as T
   }
 
@@ -221,11 +223,11 @@ export function toolHandler(opts: { basePath: string; secret: string; header?: s
     const url = new URL(request.url)
     if (!url.pathname.startsWith(`${base}/`)) return null
     if (!opts.secret || !sameString(request.headers.get(header) ?? '', opts.secret)) return json({ error: 'unauthorized' }, 401)
-    if (request.method !== 'POST') return json({ error: 'POST only' }, 405)
+    if (request.method !== 'POST' && request.method !== 'GET') return json({ error: 'GET or POST' }, 405)
     const tool = url.pathname.slice(base.length + 1)
     const fn = Object.hasOwn(opts.tools, tool) ? opts.tools[tool] : undefined
     if (!fn) return json({ error: `no tool ${tool}` }, 404)
-    const args = ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>
+    const args = (request.method === 'POST' ? ((await request.json().catch(() => ({}))) ?? {}) : {}) as Record<string, unknown>
     const context = Object.fromEntries(url.searchParams)
     try {
       const result = await fn(args, { tool, context, request })
@@ -237,6 +239,13 @@ export function toolHandler(opts: { basePath: string; secret: string; header?: s
       return json({ ok: false, error })
     }
   }
+}
+
+/** Values of secret-looking JSON keys (and every request_headers value) blanked out. */
+export function redact(text: string): string {
+  return text
+    .replace(/("[^"]*(?:secret|key|token|authorization|password)[^"]*"\s*:\s*)"[^"]*"/gi, '$1"***"')
+    .replace(/("request_headers"\s*:\s*\{)[^}]*\}/g, '$1"***":"***"}')
 }
 
 function sameString(a: string, b: string): boolean {

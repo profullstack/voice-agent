@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/voice-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Phone voice agents that hold a real conversation: define one in code (persona, voice, model, webhook tools), deploy it to ElevenLabs Conversational AI with a SIP address, dial it into any call, and answer its tools from your server. The brain behind group.call's agents and the Off The Record host.",
   "license": "MIT",
   "type": "module",
